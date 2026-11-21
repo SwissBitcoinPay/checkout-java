@@ -7,6 +7,12 @@ Released versions are signed and published by CI, once a maintainer approves the
 (`.github/workflows/release.yml`): to the GitHub Release of their tag and to the Maven repository
 `https://maven.sattle.me`.
 
+## 1.0.1 - 2026-11-21
+
+The first published version: the code of 1.0.0, unchanged. 1.0.0 was tagged, but its GitHub
+Release was made without its files, and a release cannot change once published: 1.0.0 is not
+published, neither on its GitHub Release nor at `https://maven.sattle.me`.
+
 ## 1.0.0 - 2026-11-21
 
 First version, stable. Follows version 1.0.0 of the specification
