@@ -1,0 +1,59 @@
+name: CI
+
+# Every pull request and every push to main (and the release workflow, before it publishes): the
+# pinned copy of the specification, then the build: every dependency and plugin against its
+# checksum (.mvn/checksums), javac with every lint warning an error, the tests (against the
+# conformance vectors, local relays and fakes: no network), the jars with javadoc's lint, and the
+# format (google-java-format, on Java 21 and later). On every supported version of Java: 17, 21
+# and 25. scripts/check runs the same. GitHub-hosted runners only: on a public repository, a pull
+# request from a fork must never run on a self-hosted runner (GitHub's advice).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Checks (Java ${{ matrix.java }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # pom.xml: Java 17 or later; every long-term release Java has since. Each JDK pinned
+        # (Eclipse Temurin) by its version as Adoptium writes it: setup-java compares a version
+        # with a build to Adoptium's exactly, and writes 21 and 25 with `.0.LTS`.
+        include:
+          - java: "17"
+            jdk: "17.0.21+9"
+          - java: "21"
+            jdk: "21.0.13+9.0.LTS"
+          - java: "25"
+            jdk: "25.0.5+8.0.LTS"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache: Maven downloads the artifacts of .mvn/checksums, and checks each one.
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+      - name: Where Java is
+        run: java -version
+      - name: The pinned copy of the specification
+        run: scripts/spec check
+      # The Maven Wrapper: Maven 3.10.1, its SHA-256 checked (.mvn/wrapper).
+      - name: Build, lint, tests, jars and format
+        run: ./mvnw -B verify
+      # What a release would upload: the jar, its sources and its javadoc.
+      - name: What was built
+        run: ls -l target/*.jar

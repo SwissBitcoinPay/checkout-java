@@ -1,0 +1,206 @@
+#!/bin/sh
+# The public Maven repository of me.sattle:checkout, https://maven.sattle.me (GitHub Pages), made by
+# .github/workflows/release.yml. Each release is a GitHub Release of its tag vX.Y.Z (immutable once
+# published) holding the package's files, each signed: the jar, its sources, its javadoc and its POM,
+# with their signatures (.asc). The repository is made again from every release each time: a release
+# is never changed afterwards, and the site holds nothing that is not in one.
+#
+#   scripts/maven-repo stage <version> <dir>
+#       After `./mvnw -P release verify`: copies the package's files and their signatures from
+#       target/ into <dir> (the release's files), each signature checked against signing-key.asc.
+#   scripts/maven-repo notes <version>
+#       The section of CHANGELOG.md for <version>, the release's notes.
+#   scripts/maven-repo site <releases> <site> <lastUpdated>
+#       From <releases>/<version>/ (the files of each release), the repository in <site>:
+#       me/sattle/checkout/<version>/ with each file's checksums (MD5, SHA-1, SHA-256, SHA-512), the
+#       artifact's maven-metadata.xml, the public key and an index page. Each signature is checked
+#       again. <lastUpdated>: the date of the latest release, yyyyMMddHHmmss (UTC).
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+group=me.sattle
+group_path=me/sattle
+artifact=checkout
+key="$root/signing-key.asc"
+# The key that signs the releases: signing-key.asc must be this key, and nothing else.
+fingerprint=7E58A4133B5DEA68CFDE97B6E57CD18CEB43024D
+
+fail() {
+  echo "maven-repo: $*" >&2
+  exit 1
+}
+
+# Scratch space (the keyring): removed on exit, whatever happens.
+work=$(mktemp -d "${TMPDIR:-/tmp}/maven-repo.XXXXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+# A version of this package: X.Y.Z, digits only (what a tag vX.Y.Z names).
+check_version() {
+  printf '%s\n' "$1" | grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)' ||
+    fail "not a version: $1"
+}
+
+# The files of a release of <version>, in a fixed order.
+files_of() {
+  for f in "$artifact-$1.jar" "$artifact-$1-sources.jar" "$artifact-$1-javadoc.jar" \
+    "$artifact-$1.pom"; do
+    echo "$f"
+    echo "$f.asc"
+  done
+}
+
+# A keyring of signing-key.asc alone, after checking that it holds exactly the expected key.
+keyring() {
+  [ -f "$key" ] || fail "missing $key"
+  dir="$work/gnupg"
+  mkdir -m 700 "$dir"
+  gpg --batch --quiet --homedir "$dir" --import "$key" 2>/dev/null ||
+    fail "signing-key.asc is not an OpenPGP public key"
+  found=$(gpg --batch --homedir "$dir" --with-colons --fingerprint 2>/dev/null |
+    awk -F: '$1 == "pub" { pub = 1; next } $1 == "fpr" && pub { print $10; pub = 0 }')
+  [ "$found" = "$fingerprint" ] || fail "signing-key.asc holds $found, not $fingerprint"
+  gpg --batch --quiet --homedir "$dir" --export > "$dir/keyring.gpg"
+  echo "$dir"
+}
+
+# Checks <file>.asc, a signature of <file> by the key, and only by it.
+verify() {
+  status=$(gpgv --keyring "$1/keyring.gpg" --status-fd 1 "$2.asc" "$2" 2>/dev/null) ||
+    fail "bad signature: $(basename "$2")"
+  printf '%s\n' "$status" | grep -Eq "^\[GNUPG:\] VALIDSIG $fingerprint " ||
+    fail "not signed by $fingerprint: $(basename "$2")"
+}
+
+# Writes <file>.md5, .sha1, .sha256 and .sha512: the hex digest alone, as Maven reads it.
+checksums() {
+  for alg in md5 sha1 sha256 sha512; do
+    "${alg}sum" "$1" | cut -d ' ' -f 1 > "$1.$alg"
+  done
+}
+
+stage() {
+  [ $# -eq 2 ] || fail "usage: maven-repo stage <version> <dir>"
+  version=$1
+  out=$2
+  check_version "$version"
+  pom_version=$(sed -n 's:^  <version>\(.*\)</version>$:\1:p' "$root/pom.xml")
+  [ "$pom_version" = "$version" ] || fail "pom.xml is version $pom_version, not $version"
+  mkdir -p "$out"
+  [ -z "$(ls -A "$out")" ] || fail "$out is not empty"
+  ring=$(keyring)
+  for f in $(files_of "$version"); do
+    [ -f "$root/target/$f" ] || fail "missing target/$f"
+    cp "$root/target/$f" "$out/$f"
+  done
+  for f in $(files_of "$version" | grep -v '\.asc$'); do
+    verify "$ring" "$out/$f"
+  done
+  echo "$version: $(files_of "$version" | wc -l) files, signed by $fingerprint"
+}
+
+notes() {
+  [ $# -eq 1 ] || fail "usage: maven-repo notes <version>"
+  check_version "$1"
+  text=$(awk -v v="$1" '
+    /^## / { if (inside) exit; inside = (index($0, "## " v " ") == 1) ; next }
+    inside { print }
+  ' "$root/CHANGELOG.md")
+  [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || fail "no section for $1 in CHANGELOG.md"
+  printf '%s\n' "$text" | sed -e '/./,$!d'
+}
+
+site() {
+  [ $# -eq 3 ] || fail "usage: maven-repo site <releases> <site> <lastUpdated>"
+  releases=$1
+  out=$2
+  updated=$3
+  printf '%s\n' "$updated" | grep -Eqx '[0-9]{14}' || fail "not a date yyyyMMddHHmmss: $updated"
+  mkdir -p "$out"
+  [ -z "$(ls -A "$out")" ] || fail "$out is not empty"
+  # Names checked below (check_version, then the exact files of a release): ls is safe here.
+  # shellcheck disable=SC2012
+  versions=$(ls "$releases" | sort -V)
+  [ -n "$versions" ] || fail "no release in $releases"
+  ring=$(keyring)
+  for version in $versions; do
+    check_version "$version"
+    # Exactly the files of a release: nothing missing, nothing more.
+    expected=$(files_of "$version" | sort)
+    # shellcheck disable=SC2012
+    present=$(ls "$releases/$version" | sort)
+    [ "$present" = "$expected" ] || fail "$version: not the files of a release"
+    dir="$out/$group_path/$artifact/$version"
+    mkdir -p "$dir"
+    for f in $(files_of "$version"); do
+      cp "$releases/$version/$f" "$dir/$f"
+    done
+    for f in $(files_of "$version" | grep -v '\.asc$'); do
+      verify "$ring" "$dir/$f"
+    done
+    for f in $(files_of "$version"); do
+      checksums "$dir/$f"
+    done
+  done
+  latest=$(printf '%s\n' "$versions" | tail -n 1)
+  metadata="$out/$group_path/$artifact/maven-metadata.xml"
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo '<metadata>'
+    echo "  <groupId>$group</groupId>"
+    echo "  <artifactId>$artifact</artifactId>"
+    echo '  <versioning>'
+    echo "    <latest>$latest</latest>"
+    echo "    <release>$latest</release>"
+    echo '    <versions>'
+    for version in $versions; do
+      echo "      <version>$version</version>"
+    done
+    echo '    </versions>'
+    echo "    <lastUpdated>$updated</lastUpdated>"
+    echo '  </versioning>'
+    echo '</metadata>'
+  } > "$metadata"
+  checksums "$metadata"
+  cp "$key" "$out/signing-key.asc"
+  {
+    echo '<!DOCTYPE html>'
+    echo '<html lang="en"><head><meta charset="utf-8"><title>maven.sattle.me</title>'
+    echo '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+    echo '<body style="font-family: sans-serif; max-width: 46em; margin: 2em auto; padding: 0 1em">'
+    echo '<h1>maven.sattle.me</h1>'
+    echo "<p>The Maven repository of <code>$group:$artifact</code>, the sattle.me checkout package"
+    echo 'for Java: <a href="https://github.com/sattleme/checkout-java">sattleme/checkout-java</a>.</p>'
+    echo '<p>Versions:</p><ul>'
+    for version in $(printf '%s\n' "$versions" | sort -rV); do
+      echo "<li><a href=\"$group_path/$artifact/$version/\">$version</a></li>"
+    done
+    echo '</ul>'
+    echo "<p>Every file is signed by the key <code>$fingerprint</code>:"
+    echo '<a href="signing-key.asc">signing-key.asc</a>.</p>'
+    echo '</body></html>'
+  } > "$out/index.html"
+  # A page per version, so that its directory lists its files.
+  for version in $versions; do
+    dir="$out/$group_path/$artifact/$version"
+    {
+      echo '<!DOCTYPE html>'
+      echo "<html lang=\"en\"><head><meta charset=\"utf-8\"><title>$artifact $version</title></head><body><ul>"
+      for f in $(files_of "$version"); do
+        for name in "$f" "$f.md5" "$f.sha1" "$f.sha256" "$f.sha512"; do
+          echo "<li><a href=\"$name\">$name</a></li>"
+        done
+      done
+      echo '</ul></body></html>'
+    } > "$dir/index.html"
+  done
+  echo "$out: $(printf '%s\n' "$versions" | wc -l) versions ($latest the latest)"
+}
+
+[ $# -ge 1 ] || fail "usage: maven-repo stage|notes|site …"
+command=$1
+shift
+case $command in
+  stage) stage "$@" ;;
+  notes) notes "$@" ;;
+  site) site "$@" ;;
+  *) fail "unknown command: $command" ;;
+esac

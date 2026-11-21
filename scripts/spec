@@ -1,0 +1,14 @@
+#!/bin/sh
+# The pinned copy of the specification (spec/, PIN.json): a program of one file, the JDK alone.
+#   scripts/spec check                        whether spec/ is PIN.json's, file for file
+#   scripts/spec import <checkout-spec clone> spec/ from a clean clone, at the commit it is on
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+tool="$root/src/test/java/me/sattle/checkout/SpecCopy.java"
+if [ "${1-}" = import ] && [ $# -eq 2 ]; then
+  clone=$(cd "$2" && pwd)
+  cd "$root"
+  exec java "$tool" import "$clone"
+fi
+cd "$root"
+exec java "$tool" "$@"

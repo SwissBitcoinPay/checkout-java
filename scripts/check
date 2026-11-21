@@ -1,0 +1,33 @@
+#!/bin/sh
+# Every check of the repository, as CI runs them (.github/workflows/ci.yml): the pinned copy of the
+# specification, then the build (every dependency and plugin against its checksum, javac with
+# every lint warning an error, the tests, the jars with javadoc's lint, and the format on JDK 21 or
+# later) on the JDK of JAVA_HOME (else the one on the PATH), then again on each JDK given:
+#
+#   scripts/check                          on this JDK (21 or later: the format is checked there)
+#   scripts/check /opt/jdk-17 /opt/jdk-25  and again on Java 17 and 25, as the CI
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+step() {
+  printf '\n== %s\n' "$*"
+}
+
+# The JDK's version line (not a "Picked up JAVA_TOOL_OPTIONS" line of the environment).
+version() {
+  "$1" -version 2>&1 | grep -v '^Picked up' | head -n 1
+}
+
+step "The pinned copy of the specification"
+scripts/spec check
+
+step "Build, lint, tests, jars and format: $(version "${JAVA_HOME:+$JAVA_HOME/bin/}java")"
+./mvnw -B clean verify
+
+for jdk in "$@"; do
+  step "Build, lint, tests and jars: $(version "$jdk/bin/java")"
+  JAVA_HOME="$jdk" ./mvnw -B clean verify
+done
+
+printf '\nEvery check passed.\n'

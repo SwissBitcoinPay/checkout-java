@@ -1,0 +1,27 @@
+# Pull requests that keep the actions and the Maven dependencies and plugins up to date: one pull
+# request per ecosystem, grouping all its updates. Each waits a week after a release (cooldown):
+# time for a compromised release to be found and pulled before it reaches this repository.
+version: 2
+updates:
+  # The SHA-pinned actions of .github/workflows/, in one pull request.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The dependencies and plugins of pom.xml, pinned exactly, in one pull request. It also needs
+  # their checksums recorded again (scripts/checksums): until then its build fails, as it should.
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      maven:
+        patterns: ["*"]

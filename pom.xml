@@ -1,0 +1,488 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>me.sattle</groupId>
+  <artifactId>checkout</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>sattle.me checkout</name>
+  <description>Take Lightning and on-chain payments for a sattle.me merchant from an online shop's server: the invoice of each order, its declaration in the merchant's registry, and the check of its payment.</description>
+  <url>https://sattle.me</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/license/mit</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <organization>
+    <name>sattle.me</name>
+    <url>https://sattle.me</url>
+  </organization>
+
+  <developers>
+    <developer>
+      <name>sattle.me</name>
+      <url>https://sattle.me</url>
+      <organization>sattle.me</organization>
+      <organizationUrl>https://sattle.me</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/sattleme/checkout-java.git</connection>
+    <developerConnection>scm:git:https://github.com/sattleme/checkout-java.git</developerConnection>
+    <url>https://github.com/sattleme/checkout-java</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub</system>
+    <url>https://github.com/sattleme/checkout-java/issues</url>
+  </issueManagement>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <!-- Reproducible builds: every entry of the jars dated so, whenever and wherever they are made. -->
+    <project.build.outputTimestamp>2026-11-20T00:00:00Z</project.build.outputTimestamp>
+    <!-- javadoc's lint, every group (the profile "javadoc-17" leaves one out on Java 17). -->
+    <javadoc.doclint>all</javadoc.doclint>
+
+    <!-- Dependencies: ACINQ's JNI bindings of libsecp256k1 (BIP-340 signatures, x-only keys,
+         point multiplication), with Kotlin's standard library, which they need. -->
+    <secp256k1-kmp.version>0.24.0</secp256k1-kmp.version>
+    <kotlin-stdlib.version>2.4.21</kotlin-stdlib.version>
+    <jetbrains-annotations.version>26.1.0</jetbrains-annotations.version>
+    <junit.version>6.1.3</junit.version>
+    <!-- Tests only: the serializers an application calls on what it logs or returns, to check that
+         none writes the key (cross-port item 12). -->
+    <jackson.version>2.23.0</jackson.version>
+    <gson.version>2.15.0</gson.version>
+
+    <!-- Plugins, every one pinned. -->
+    <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
+    <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
+    <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.6.1</maven-surefire-plugin.version>
+    <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
+    <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+    <maven-install-plugin.version>3.2.0</maven-install-plugin.version>
+    <maven-deploy-plugin.version>3.2.0</maven-deploy-plugin.version>
+    <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
+    <maven-enforcer-plugin.version>3.7.0</maven-enforcer-plugin.version>
+    <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+    <spotless-maven-plugin.version>3.11.0</spotless-maven-plugin.version>
+    <!-- google-java-format runs on JDK 21 or later: the format is checked there (the "format"
+         profile), and on JDK 17 the build skips that check. 2.0.0: the latest, which Spotless 3.11.0
+         runs. -->
+    <google-java-format.version>2.0.0</google-java-format.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Every dependency pinned exactly. Maven has no lockfile: .mvn/checksums holds the SHA-256
+           of every artifact the build resolves, dependencies and plugins, which .mvn/maven.config
+           has Maven check (its resolver's trusted checksums); scripts/checksums records them. -->
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jvm</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-jvm</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-common</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-jvm-extract</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-jvm-linux</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-jvm-darwin</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>fr.acinq.secp256k1</groupId>
+        <artifactId>secp256k1-kmp-jni-jvm-mingw</artifactId>
+        <version>${secp256k1-kmp.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jetbrains.kotlin</groupId>
+        <artifactId>kotlin-stdlib</artifactId>
+        <version>${kotlin-stdlib.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jetbrains</groupId>
+        <artifactId>annotations</artifactId>
+        <version>${jetbrains-annotations.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.google.code.gson</groupId>
+        <artifactId>gson</artifactId>
+        <version>${gson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- The Secp256k1 interface the package calls (BIP-340, x-only keys, point multiplication). -->
+    <dependency>
+      <groupId>fr.acinq.secp256k1</groupId>
+      <artifactId>secp256k1-kmp-jvm</artifactId>
+    </dependency>
+    <!-- Its JNI implementation, with libsecp256k1 for Linux, macOS and Windows: at run time. -->
+    <dependency>
+      <groupId>fr.acinq.secp256k1</groupId>
+      <artifactId>secp256k1-kmp-jni-jvm</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Tests only: what Jackson and Gson write of the client and its builder (no key). -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>${maven-clean-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>${maven-resources-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${maven-compiler-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${maven-jar-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>${maven-source-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${maven-javadoc-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>${maven-install-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>${maven-deploy-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-site-plugin</artifactId>
+          <version>${maven-site-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>${maven-enforcer-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>${maven-gpg-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>com.diffplug.spotless</groupId>
+          <artifactId>spotless-maven-plugin</artifactId>
+          <version>${spotless-maven-plugin.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireMavenVersion>
+                  <version>[3.10.1,4)</version>
+                </requireMavenVersion>
+                <!-- Java's own HTTP client bounds an answer's head from these updates on
+                     (jdk.http.maxHeaderSize): the client refuses the others. -->
+                <requireJavaVersion>
+                  <version>[17.0.11,18),[21.0.3,22),[22.0.1,)</version>
+                </requireJavaVersion>
+                <!-- Every plugin pinned, no version range, one version of each dependency. -->
+                <requirePluginVersions>
+                  <banLatest>true</banLatest>
+                  <banRelease>true</banRelease>
+                  <banSnapshots>true</banSnapshots>
+                </requirePluginVersions>
+                <banDynamicVersions/>
+                <dependencyConvergence/>
+                <requireUpperBoundDeps/>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <release>17</release>
+          <showWarnings>true</showWarnings>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Werror</arg>
+            <!-- secp256k1-kmp splits the package fr.acinq.secp256k1 across two jars, which the
+                 module path refuses: they stay on the class path, read by this module. -->
+            <arg>--add-reads</arg>
+            <arg>me.sattle.checkout=ALL-UNNAMED</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- Temporary files (libsecp256k1 extracted from its jar included) under target/, never a
+               shared directory. Native access for the class path, where secp256k1-kmp's loader
+               calls System.load, as the README asks of applications: Java 24 and later warn
+               without it (JEP 472); Java 17 and 21 accept the flag. -->
+          <argLine>--enable-native-access=ALL-UNNAMED -Djava.io.tmpdir=${project.build.directory} -Dfr.acinq.secp256k1.tmpdir=${project.build.directory}</argLine>
+          <trimStackTrace>false</trimStackTrace>
+          <redirectTestOutputToFile>true</redirectTestOutputToFile>
+        </configuration>
+        <executions>
+          <!-- The package on the class path as well, as most applications use it: libsecp256k1
+               loaded from its jar, a client made and its calls answered, outside the module. -->
+          <execution>
+            <id>classpath</id>
+            <goals>
+              <goal>test</goal>
+            </goals>
+            <configuration>
+              <useModulePath>false</useModulePath>
+              <includes>
+                <include>**/CheckoutTest.java</include>
+                <include>**/KeyTest.java</include>
+                <include>**/Nip44Test.java</include>
+                <include>**/SerializersTest.java</include>
+              </includes>
+              <reportsDirectory>${project.build.directory}/surefire-reports-classpath</reportsDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Implementation-Title>${project.name}</Implementation-Title>
+              <Implementation-Version>${project.version}</Implementation-Version>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <configuration>
+          <release>17</release>
+          <doclint>${javadoc.doclint}</doclint>
+          <failOnWarnings>true</failOnWarnings>
+          <quiet>true</quiet>
+          <!-- UTF-8 whatever the platform's encoding (ASCII under a POSIX locale on Java 17): the
+               sources javadoc reads, the pages it writes, and options in ASCII, which the plugin
+               writes in the platform's encoding (the default footer writes the organization's
+               name as it is). -->
+          <docencoding>UTF-8</docencoding>
+          <charset>UTF-8</charset>
+          <bottom>sattle.me checkout. MIT License.</bottom>
+          <additionalJOptions>
+            <additionalJOption>-J-Dfile.encoding=UTF-8</additionalJOption>
+          </additionalJOptions>
+          <additionalOptions>
+            <option>--add-reads</option>
+            <option>me.sattle.checkout=ALL-UNNAMED</option>
+          </additionalOptions>
+        </configuration>
+        <executions>
+          <execution>
+            <id>javadoc</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Java 17's javadoc finds no comment on a record's components, documented as @param of the
+         record (fixed in later versions): there its lint leaves the group "missing" out, which
+         Java 21 and later check. -->
+    <profile>
+      <id>javadoc-17</id>
+      <activation>
+        <jdk>[17,21)</jdk>
+      </activation>
+      <properties>
+        <javadoc.doclint>all,-missing</javadoc.doclint>
+      </properties>
+    </profile>
+
+    <!-- The format of the sources (google-java-format, through Spotless), checked at verify on JDK 21
+         or later, where google-java-format runs. -->
+    <profile>
+      <id>format</id>
+      <activation>
+        <jdk>[21,)</jdk>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.diffplug.spotless</groupId>
+            <artifactId>spotless-maven-plugin</artifactId>
+            <configuration>
+              <java>
+                <googleJavaFormat>
+                  <version>${google-java-format.version}</version>
+                  <style>GOOGLE</style>
+                </googleJavaFormat>
+                <removeUnusedImports/>
+              </java>
+            </configuration>
+            <executions>
+              <execution>
+                <id>format</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- The release (.github/workflows/release.yml): the artifacts and the POM signed with GPG at
+         verify, then published by the workflow (scripts/maven-repo) to the GitHub Release of the tag
+         and to https://maven.sattle.me. Never run from a development session. -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>sign</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <!-- Bouncy Castle, in Java: the key (armored) and its passphrase from the
+                       environment of the build alone (MAVEN_GPG_KEY, MAVEN_GPG_PASSPHRASE), no
+                       GnuPG keyring on the machine; nothing secret in a file. -->
+                  <signer>bc</signer>
+                  <bestPractices>true</bestPractices>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

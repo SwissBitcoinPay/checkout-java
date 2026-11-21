@@ -1,0 +1,36 @@
+#!/bin/sh
+# The SHA-256 of every artifact the build resolves from Maven Central, dependencies and plugins:
+# .mvn/checksums/checksums-central.sha256. Maven checks each artifact against it on every build
+# (.mvn/maven.config: its resolver's trusted checksums); one missing from it, or of another checksum,
+# fails the build. Maven has no lockfile: a version says which artifact, these say which bytes.
+# The file is named by the repository's id alone (aether.system.repositoryKeyFunction=simple):
+# Maven 3.10's resolver (2.0) would otherwise add a hash of its URL to the name.
+#
+#   scripts/checksums   records them again, from a fresh local repository (every artifact
+#                       downloaded from Maven Central again), for the build and its checks and for
+#                       the release. Run it on JDK 21 or later (the format check runs there only)
+#                       after a dependency or a plugin changed, a Dependabot pull request included,
+#                       then review `git diff .mvn/checksums`: each new line is an artifact trusted.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+summary="$root/.mvn/checksums/checksums-central.sha256"
+work=$(mktemp -d "${TMPDIR:-/tmp}/checksums.XXXXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+# Maven Central itself, never a mirror of the user's settings.
+cat > "$work/settings.xml" <<'EOF'
+<settings/>
+EOF
+rm -f "$summary"
+record() {
+  "$root/mvnw" -B -q -f "$root/pom.xml" -s "$work/settings.xml" \
+    -Dmaven.repo.local="$work/repository" \
+    -Daether.artifactResolver.postProcessor.trustedChecksums.record=true "$@"
+}
+# The build: its checks, its tests, its jars.
+record clean verify
+# The release: its signature (the plugin resolved, the signing skipped).
+record -P release -Dgpg.skip=true -DskipTests clean verify
+record clean
+# The resolver keeps the file it replaced, as a backup: not needed.
+rm -f "$summary.bak"
+echo "$(wc -l < "$summary") artifacts in .mvn/checksums/checksums-central.sha256"

@@ -1,0 +1,143 @@
+name: Release
+
+# A maintainer pushes tag vX.Y.Z (= the <version> of pom.xml, on main): the CI again, then
+# me.sattle:checkout built at that commit and signed, from a job a maintainer approves (the
+# protected environment `release`, which alone holds the signing key), into a GitHub Release of the
+# tag (immutable once published); then the Maven repository https://maven.sattle.me (GitHub Pages)
+# made again from every release. Never from a development or agent session (checkout-spec's
+# PORTING.md, "Releases").
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  # Before the environment gate, so reviewers are only asked to approve valid releases.
+  verify-tag:
+    name: Verify release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Tag must match the package's version
+        run: |
+          # The project's own <version>, the only one indented by two spaces in pom.xml.
+          version="$(sed -n 's:^  <version>\(.*\)</version>$:\1:p' pom.xml)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the package's version (v$version)."
+            exit 1
+          fi
+      - name: Tagged commit must be on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$GITHUB_REF_NAME points to a commit that is not on main."
+            exit 1
+          fi
+      - name: The release has notes in CHANGELOG.md
+        run: scripts/maven-repo notes "${GITHUB_REF_NAME#v}" > /dev/null
+
+  publish:
+    name: Release me.sattle:checkout
+    needs: [checks, verify-tag]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The protected environment (required reviewers: a maintainer approves each release; deployment
+    # tags: v*.*.*), which alone holds the secrets: the key that signs the artifacts (MAVEN_GPG_KEY,
+    # armored, and MAVEN_GPG_PASSPHRASE), read by Maven from the environment of its step alone,
+    # never written.
+    environment: release
+    permissions:
+      # The GitHub Release of the tag, and its files.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Java 21, as ci.yml.
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21.0.13+9.0.LTS"
+      # The jar, its sources and its javadoc, from .mvn/checksums' artifacts at this very commit
+      # (reproducible: dated by project.build.outputTimestamp), and the POM, each signed with Bouncy
+      # Castle (no gpg keyring on the runner). The tests ran in the checks above.
+      - name: Build and sign
+        env:
+          MAVEN_GPG_KEY: ${{ secrets.MAVEN_GPG_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: ./mvnw -B -P release -DskipTests verify
+      # The release's files, each signature checked against signing-key.asc, and its notes.
+      - name: Stage the release
+        run: |
+          scripts/maven-repo stage "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/release"
+          scripts/maven-repo notes "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+      # Made as a draft, its files uploaded, then published (gh release create does so): published,
+      # neither its files nor its tag can change any more (release immutability).
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/release/*
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isImmutable --jq .isImmutable)" != true ]; then
+            echo "::warning::$GITHUB_REF_NAME is not immutable: check Settings, Releases."
+          fi
+
+  # The Maven repository, made again from every published release vX.Y.Z (each signature checked
+  # again), and deployed to GitHub Pages (https://maven.sattle.me). To deploy it again (after a
+  # failure of Pages), re-run this job of the latest release.
+  pages:
+    name: Deploy maven.sattle.me
+    needs: [publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          releases="$RUNNER_TEMP/releases"
+          mkdir -p "$releases"
+          gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
+            --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/tags"
+          latest=""
+          while read -r tag; do
+            printf '%s\n' "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || continue
+            gh release download "$tag" --dir "$releases/${tag#v}" --pattern 'checkout-*'
+            published=$(gh release view "$tag" --json publishedAt --jq .publishedAt)
+            if [ -z "$latest" ] || [ "$published" \> "$latest" ]; then latest=$published; fi
+          done < "$RUNNER_TEMP/tags"
+          [ -n "$latest" ] || { echo "::error::No release to deploy."; exit 1; }
+          # maven-metadata.xml's lastUpdated: the latest release's date, yyyyMMddHHmmss (UTC).
+          echo "LAST_UPDATED=$(date -u -d "$latest" +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
+      - name: Make the repository
+        run: scripts/maven-repo site "$RUNNER_TEMP/releases" "$RUNNER_TEMP/site" "$LAST_UPDATED"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
