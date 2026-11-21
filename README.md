@@ -50,7 +50,7 @@ Central (its dependencies are on Maven Central). Maven:
 <dependency>
   <groupId>me.sattle</groupId>
   <artifactId>checkout</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
 </dependency>
 ```
 
@@ -66,7 +66,7 @@ repositories {
 }
 
 dependencies {
-    implementation("me.sattle:checkout:1.0.0")
+    implementation("me.sattle:checkout:1.0.1")
 }
 ```
 

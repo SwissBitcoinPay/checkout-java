@@ -47,6 +47,19 @@ jobs:
           fi
       - name: The release has notes in CHANGELOG.md
         run: scripts/maven-repo notes "${GITHUB_REF_NAME#v}" > /dev/null
+      # The GitHub Release of the tag is made by the publish job alone, with its files: one made by
+      # hand (Releases, "Create a new release") is published without them, and cannot change.
+      - name: The tag has no GitHub Release yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id 2>&1); then
+            echo "::error::$GITHUB_REF_NAME already has a GitHub Release: push only the tag, the workflow makes the release."
+            exit 1
+          elif ! printf '%s\n' "$out" | grep -q 'HTTP 404'; then
+            echo "::error::Cannot check the GitHub Release of $GITHUB_REF_NAME: $out"
+            exit 1
+          fi
 
   publish:
     name: Release me.sattle:checkout
@@ -127,6 +140,14 @@ jobs:
           latest=""
           while read -r tag; do
             printf '%s\n' "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || continue
+            # A release without any file of the package (v1.0.0, published by hand before its
+            # workflow ran) is not in the repository; one with some of its files only fails below.
+            files=$(gh release view "$tag" --json assets \
+              --jq '[.assets[].name | select(startswith("checkout-"))] | length')
+            if [ "$files" -eq 0 ]; then
+              echo "::warning::$tag has no file of the package: not in the repository."
+              continue
+            fi
             gh release download "$tag" --dir "$releases/${tag#v}" --pattern 'checkout-*'
             published=$(gh release view "$tag" --json publishedAt --jq .publishedAt)
             if [ -z "$latest" ] || [ "$published" \> "$latest" ]; then latest=$published; fi
